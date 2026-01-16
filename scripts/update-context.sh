@@ -1,0 +1,504 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════════════
+# 🧠 CONTEXT JOURNAL — Auto-updates all _CONTEXT.md files
+# ═══════════════════════════════════════════════════════════════════════════
+# Run this manually or schedule it to keep your context journals fresh.
+# It scans your folders and rebuilds your mental state automatically.
+
+ICLOUD="$HOME/Library/Mobile Documents/com~apple~CloudDocs"
+NOW=$(date "+%Y-%m-%d %H:%M")
+TODAY=$(date "+%Y-%m-%d")
+YEAR=$(date "+%Y")
+
+# Colors for terminal output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo "  🧠 CONTEXT JOURNAL — Rebuilding your mental state..."
+echo "════════════════════════════════════════════════════════════"
+echo ""
+
+# ═══════════════════════════════════════════════════════════════
+# Helper Functions
+# ═══════════════════════════════════════════════════════════════
+
+count_files() {
+    find "$1" -type f ! -name ".*" ! -name "_*" 2>/dev/null | wc -l | tr -d ' '
+}
+
+recent_files() {
+    # Get files modified in last N days
+    local dir="$1"
+    local days="$2"
+    find "$dir" -type f ! -name ".*" ! -name "_*" -mtime -"$days" 2>/dev/null | head -10
+}
+
+stale_files() {
+    # Get files older than N days
+    local dir="$1"
+    local days="$2"
+    find "$dir" -type f ! -name ".*" ! -name "_*" -mtime +"$days" 2>/dev/null
+}
+
+format_file_list() {
+    while IFS= read -r file; do
+        if [ -n "$file" ]; then
+            basename "$file"
+        fi
+    done
+}
+
+get_folder_heatmap() {
+    local base="$1"
+    for dir in "$base"/*/; do
+        if [ -d "$dir" ]; then
+            local name=$(basename "$dir")
+            local count=$(find "$dir" -type f -mtime -7 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$count" -gt 0 ]; then
+                local bar=""
+                for ((i=0; i<count && i<10; i++)); do bar+="█"; done
+                echo "  $name: $bar ($count this week)"
+            fi
+        fi
+    done
+}
+
+# ═══════════════════════════════════════════════════════════════
+# 📥 INBOX Context
+# ═══════════════════════════════════════════════════════════════
+
+INBOX="$ICLOUD/📥 INBOX"
+if [ -d "$INBOX" ]; then
+    echo -e "${BLUE}📥 Updating INBOX context...${NC}"
+
+    TO_SORT_COUNT=$(count_files "$INBOX/To-Sort")
+    WAITING_COUNT=$(count_files "$INBOX/Waiting-On")
+    CAPTURE_COUNT=$(count_files "$INBOX/Quick-Capture")
+    TOTAL_INBOX=$((TO_SORT_COUNT + WAITING_COUNT + CAPTURE_COUNT))
+
+    STALE_COUNT=$(stale_files "$INBOX" 14 | wc -l | tr -d ' ')
+
+    # Detect patterns from filenames
+    PATTERNS=""
+    if find "$INBOX" -type f -iname "*invoice*" 2>/dev/null | grep -q .; then
+        PATTERNS+="💰 Invoices detected — maybe billing to do?\n"
+    fi
+    if find "$INBOX" -type f -iname "*contract*" -o -iname "*agreement*" 2>/dev/null | grep -q .; then
+        PATTERNS+="📝 Contracts detected — review needed?\n"
+    fi
+    if find "$INBOX" -type f \( -iname "*.psd" -o -iname "*.ai" -o -iname "*.fig" \) 2>/dev/null | grep -q .; then
+        PATTERNS+="🎨 Design files detected — creative work in progress?\n"
+    fi
+    if find "$INBOX" -type f \( -iname "*.mp4" -o -iname "*.mov" -o -iname "*.jpg" -o -iname "*.png" \) 2>/dev/null | grep -q .; then
+        PATTERNS+="📸 Media files detected — content creation mode?\n"
+    fi
+
+    cat > "$INBOX/_CONTEXT.md" << EOF
+# 📥 INBOX — What's Happening
+
+> **Last updated:** $NOW
+> **Total items:** $TOTAL_INBOX
+
+---
+
+## 📊 Status Dashboard
+
+| Zone | Count | Status |
+|------|-------|--------|
+| To-Sort | $TO_SORT_COUNT | $([ "$TO_SORT_COUNT" -gt 10 ] && echo "⚠️ Getting full" || echo "✅ Healthy") |
+| Waiting-On | $WAITING_COUNT | $([ "$WAITING_COUNT" -gt 5 ] && echo "👀 Check blockers" || echo "✅ Healthy") |
+| Quick-Capture | $CAPTURE_COUNT | $([ "$CAPTURE_COUNT" -gt 15 ] && echo "🧹 Needs sweep" || echo "✅ Healthy") |
+
+$([ "$STALE_COUNT" -gt 0 ] && echo "### ⚠️ $STALE_COUNT items older than 2 weeks — archive them!")
+
+---
+
+## 🔥 Recently Added (Last 3 Days)
+$(recent_files "$INBOX" 3 | format_file_list | sed 's/^/- /' || echo "- Nothing new!")
+
+---
+
+## 🎯 Looks Like You're Working On
+$(echo -e "$PATTERNS" | grep -v "^$" || echo "- Processing incoming files")
+
+---
+
+## ✅ Quick Wins — Do These Now
+
+- [ ] Clear Quick-Capture ($CAPTURE_COUNT items)
+- [ ] Sort the To-Sort pile ($TO_SORT_COUNT items)
+- [ ] Check Waiting-On blockers ($WAITING_COUNT items)
+$([ "$STALE_COUNT" -gt 0 ] && echo "- [ ] Archive $STALE_COUNT stale items (2+ weeks old)")
+
+---
+
+## 🏆 Inbox Zero Challenge
+
+$(if [ "$TOTAL_INBOX" -eq 0 ]; then
+    echo "# 🎉 INBOX ZERO! You're a legend!"
+elif [ "$TOTAL_INBOX" -lt 10 ]; then
+    echo "**Almost there!** Only $TOTAL_INBOX items to go. You got this! 💪"
+elif [ "$TOTAL_INBOX" -lt 25 ]; then
+    echo "**Solid progress!** $TOTAL_INBOX items — 15 min could clear this."
+else
+    echo "**Time for a sweep!** $TOTAL_INBOX items piling up. Schedule 30 min this week."
+fi)
+
+---
+*Auto-generated by update-context.sh*
+EOF
+    echo -e "${GREEN}  ✓ INBOX context updated${NC}"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# 🔥 ACTIVE Context
+# ═══════════════════════════════════════════════════════════════
+
+ACTIVE="$ICLOUD/🔥 ACTIVE"
+if [ -d "$ACTIVE" ]; then
+    echo -e "${BLUE}🔥 Updating ACTIVE context...${NC}"
+
+    MG_COUNT=$(count_files "$ACTIVE/Mattegloss-ThisWeek")
+    BJ_COUNT=$(count_files "$ACTIVE/BYJISEL-ThisWeek")
+    PERSONAL_COUNT=$(count_files "$ACTIVE/Personal-ThisWeek")
+    TOTAL_ACTIVE=$((MG_COUNT + BJ_COUNT + PERSONAL_COUNT))
+
+    # Get this week's activity
+    WEEK_ACTIVITY=$(find "$ACTIVE" -type f -mtime -7 2>/dev/null | wc -l | tr -d ' ')
+
+    cat > "$ACTIVE/_CONTEXT.md" << EOF
+# 🔥 ACTIVE — Current Sprint
+
+> **Last updated:** $NOW
+> **Active files:** $TOTAL_ACTIVE
+> **Touched this week:** $WEEK_ACTIVITY
+
+---
+
+## 📊 Activity Heatmap (Last 7 Days)
+
+$(get_folder_heatmap "$ACTIVE")
+
+---
+
+## 🎯 What's Hot Right Now
+
+$(if [ "$MG_COUNT" -gt "$BJ_COUNT" ] && [ "$MG_COUNT" -gt "$PERSONAL_COUNT" ]; then
+    echo "**Primary focus:** Mattegloss work ($MG_COUNT files)"
+elif [ "$BJ_COUNT" -gt "$PERSONAL_COUNT" ]; then
+    echo "**Primary focus:** BYJISEL projects ($BJ_COUNT files)"
+elif [ "$PERSONAL_COUNT" -gt 0 ]; then
+    echo "**Primary focus:** Personal tasks ($PERSONAL_COUNT files)"
+else
+    echo "**Looks quiet** — check if active work is in the right place"
+fi)
+
+---
+
+## 🔥 Recently Modified
+$(recent_files "$ACTIVE" 3 | format_file_list | sed 's/^/- /' || echo "- Nothing recently")
+
+---
+
+## ✅ End-of-Week Checklist
+
+- [ ] Review Mattegloss deliverables ($MG_COUNT files)
+- [ ] Check BYJISEL exports ($BJ_COUNT files)
+- [ ] Clear completed personal items ($PERSONAL_COUNT files)
+- [ ] Archive finished work → 📦 DEEP ARCHIVE/$YEAR/
+
+---
+
+## 🏆 Momentum Score
+
+$(if [ "$WEEK_ACTIVITY" -gt 20 ]; then
+    echo "# 🔥🔥🔥 ON FIRE! $WEEK_ACTIVITY files touched this week!"
+elif [ "$WEEK_ACTIVITY" -gt 10 ]; then
+    echo "**Great momentum!** $WEEK_ACTIVITY files in motion. Keep pushing!"
+elif [ "$WEEK_ACTIVITY" -gt 0 ]; then
+    echo "**Getting started.** $WEEK_ACTIVITY files — build on it!"
+else
+    echo "**Quiet week.** That's okay — rest or refocus?"
+fi)
+
+---
+*Auto-generated by update-context.sh*
+EOF
+    echo -e "${GREEN}  ✓ ACTIVE context updated${NC}"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# 🏛️ REFERENCE Context
+# ═══════════════════════════════════════════════════════════════
+
+REFERENCE="$ICLOUD/🏛️ REFERENCE"
+if [ -d "$REFERENCE" ]; then
+    echo -e "${BLUE}🏛️ Updating REFERENCE context...${NC}"
+
+    LEGAL_COUNT=$(count_files "$REFERENCE/Legal-Licenses-Contracts")
+    BRAND_COUNT=$(count_files "$REFERENCE/Brand-Assets")
+    FINANCIAL_COUNT=$(count_files "$REFERENCE/Financial-Records")
+    HOWTO_COUNT=$(count_files "$REFERENCE/How-To-Guides")
+    TOTAL_REF=$((LEGAL_COUNT + BRAND_COUNT + FINANCIAL_COUNT + HOWTO_COUNT))
+
+    cat > "$REFERENCE/_CONTEXT.md" << EOF
+# 🏛️ REFERENCE — Your Knowledge Vault
+
+> **Last updated:** $NOW
+> **Total reference files:** $TOTAL_REF
+
+---
+
+## 📁 What's Here
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| Legal/Contracts | $LEGAL_COUNT | LLC docs, agreements, licenses |
+| Brand Assets | $BRAND_COUNT | Logos, fonts, style guides |
+| Financial | $FINANCIAL_COUNT | Invoices, receipts, tax docs |
+| How-To Guides | $HOWTO_COUNT | SOPs, tutorials, cheat sheets |
+
+---
+
+## 🔍 Recently Accessed (Last 7 Days)
+$(recent_files "$REFERENCE" 7 | format_file_list | sed 's/^/- /' || echo "- Nothing accessed recently")
+
+---
+
+## ✅ Reference Health Check
+
+- [ ] Legal docs current? ($LEGAL_COUNT files)
+- [ ] Brand assets up to date? ($BRAND_COUNT files)
+- [ ] Financial records complete? ($FINANCIAL_COUNT files)
+- [ ] How-to guides still accurate? ($HOWTO_COUNT files)
+
+---
+
+## 💡 Pro Tips
+
+- **Can't find something?** Use Spotlight: \`kind:pdf contract\`
+- **Need to file something?** Use format: \`YYYY-MM_Description.ext\`
+- **Reference growing?** Consider subfolders by year or client
+
+---
+*Auto-generated by update-context.sh*
+EOF
+    echo -e "${GREEN}  ✓ REFERENCE context updated${NC}"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# 📸 MEDIA VAULT Context
+# ═══════════════════════════════════════════════════════════════
+
+MEDIA="$ICLOUD/📸 MEDIA VAULT"
+if [ -d "$MEDIA" ]; then
+    echo -e "${BLUE}📸 Updating MEDIA VAULT context...${NC}"
+
+    READY_COUNT=$(count_files "$MEDIA/Ready-To-Post")
+    RAW_COUNT=$(count_files "$MEDIA/Raw-Footage")
+    PORTFOLIO_COUNT=$(count_files "$MEDIA/Portfolio")
+    TOTAL_MEDIA=$((READY_COUNT + RAW_COUNT + PORTFOLIO_COUNT))
+
+    cat > "$MEDIA/_CONTEXT.md" << EOF
+# 📸 MEDIA VAULT — Content Library
+
+> **Last updated:** $NOW
+> **Total media files:** $TOTAL_MEDIA
+
+---
+
+## 🚀 Content Pipeline
+
+| Stage | Count | Status |
+|-------|-------|--------|
+| Ready-To-Post | $READY_COUNT | $([ "$READY_COUNT" -gt 0 ] && echo "📤 Content queued!" || echo "🔄 Need to prep content") |
+| Raw-Footage | $RAW_COUNT | $([ "$RAW_COUNT" -gt 20 ] && echo "🎬 Lots to edit!" || echo "📹 Healthy backlog") |
+| Portfolio | $PORTFOLIO_COUNT | $([ "$PORTFOLIO_COUNT" -lt 5 ] && echo "📸 Add your best work!" || echo "✨ Looking good") |
+
+---
+
+## 🔥 Recently Added
+$(recent_files "$MEDIA" 7 | format_file_list | sed 's/^/- /' || echo "- No recent media")
+
+---
+
+## ✅ Content Creator Checklist
+
+- [ ] Post from Ready-To-Post queue ($READY_COUNT waiting)
+- [ ] Edit something from Raw-Footage ($RAW_COUNT clips)
+- [ ] Update Portfolio with recent wins
+$([ "$RAW_COUNT" -gt 30 ] && echo "- [ ] ⚠️ Raw footage piling up — batch edit session?")
+
+---
+
+## 🏆 Content Score
+
+$(if [ "$READY_COUNT" -gt 5 ]; then
+    echo "# 📤 LOADED! $READY_COUNT posts ready to go!"
+elif [ "$READY_COUNT" -gt 0 ]; then
+    echo "**Content ready!** $READY_COUNT posts in the chamber."
+else
+    echo "**Pipeline empty** — time to create or edit!"
+fi)
+
+---
+*Auto-generated by update-context.sh*
+EOF
+    echo -e "${GREEN}  ✓ MEDIA VAULT context updated${NC}"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# 🧠 STRATEGIC THINKING Context
+# ═══════════════════════════════════════════════════════════════
+
+STRATEGIC="$ICLOUD/🧠 STRATEGIC THINKING"
+if [ -d "$STRATEGIC" ]; then
+    echo -e "${BLUE}🧠 Updating STRATEGIC context...${NC}"
+
+    INITIATIVES_COUNT=$(count_files "$STRATEGIC/Current-Initiatives")
+    DECISIONS_COUNT=$(count_files "$STRATEGIC/Decision-Archive")
+    TOTAL_STRATEGIC=$((INITIATIVES_COUNT + DECISIONS_COUNT))
+
+    cat > "$STRATEGIC/_CONTEXT.md" << EOF
+# 🧠 STRATEGIC THINKING — Your Brain's Backup
+
+> **Last updated:** $NOW
+> **Strategic docs:** $TOTAL_STRATEGIC
+
+---
+
+## 🎯 Active Initiatives
+
+**$INITIATIVES_COUNT active strategies** in play
+
+$(recent_files "$STRATEGIC/Current-Initiatives" 30 | format_file_list | sed 's/^/- /' || echo "- No current initiatives")
+
+---
+
+## 📚 Decision Archive
+
+**$DECISIONS_COUNT decisions** documented for future reference
+
+---
+
+## ✅ Strategic Review
+
+- [ ] Any initiatives stalled? Review Current-Initiatives
+- [ ] Recent big decision? Document it in Decision-Archive
+- [ ] Quarterly review due? Time to reflect
+
+---
+
+## 💭 Reflection Prompts
+
+- What's the ONE thing that would move the needle most this month?
+- Which initiative needs more attention?
+- Any decisions you've been avoiding?
+
+---
+
+## 🏆 Strategy Score
+
+$(if [ "$INITIATIVES_COUNT" -gt 0 ] && [ "$DECISIONS_COUNT" -gt 0 ]; then
+    echo "**Strategically sound!** Active plans + documented decisions = 🧠💪"
+elif [ "$INITIATIVES_COUNT" -gt 0 ]; then
+    echo "**Plans in motion!** Consider documenting key decisions too."
+else
+    echo "**Time to strategize?** Add your current initiatives here."
+fi)
+
+---
+*Auto-generated by update-context.sh*
+EOF
+    echo -e "${GREEN}  ✓ STRATEGIC context updated${NC}"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# 📦 DEEP ARCHIVE Context
+# ═══════════════════════════════════════════════════════════════
+
+ARCHIVE="$ICLOUD/📦 DEEP ARCHIVE"
+if [ -d "$ARCHIVE" ]; then
+    echo -e "${BLUE}📦 Updating DEEP ARCHIVE context...${NC}"
+
+    ARCHIVE_2024=$(count_files "$ARCHIVE/2024")
+    ARCHIVE_2025=$(count_files "$ARCHIVE/2025")
+    LEGACY_COUNT=$(count_files "$ARCHIVE/Legacy-Systems")
+    TOTAL_ARCHIVE=$((ARCHIVE_2024 + ARCHIVE_2025 + LEGACY_COUNT))
+
+    # Check what was happening this time last year
+    LAST_YEAR_DATE=$(date -v-1y "+%Y-%m" 2>/dev/null || date -d "1 year ago" "+%Y-%m" 2>/dev/null)
+
+    cat > "$ARCHIVE/_CONTEXT.md" << EOF
+# 📦 DEEP ARCHIVE — Time Capsule
+
+> **Last updated:** $NOW
+> **Total archived:** $TOTAL_ARCHIVE files
+
+---
+
+## 📊 Archive Stats
+
+| Year | Files | Description |
+|------|-------|-------------|
+| 2024 | $ARCHIVE_2024 | Last year's completed work |
+| 2025 | $ARCHIVE_2025 | This year's archived items |
+| Legacy | $LEGACY_COUNT | Old systems & backups |
+
+---
+
+## 📅 Recently Archived
+$(recent_files "$ARCHIVE" 14 | format_file_list | sed 's/^/- /' || echo "- Nothing archived recently")
+
+---
+
+## ✅ Archive Health
+
+- [ ] 2024 folder organized by project/month?
+- [ ] 2025 archiving on schedule?
+- [ ] Legacy-Systems documented?
+- [ ] Anything in INBOX older than 2 weeks? → Bring it here
+
+---
+
+## 🕰️ On This Day...
+
+*What were you working on this time last year?*
+*Check \`📦 DEEP ARCHIVE/2024/\` to remember!*
+
+---
+
+## 💡 Archive Tips
+
+- **Naming:** \`YYYY-MM_ProjectName_Description\`
+- **Finding stuff:** Spotlight search \`kind:folder 2024\`
+- **Big files?** Consider external backup for raw footage
+
+---
+*Auto-generated by update-context.sh*
+EOF
+    echo -e "${GREEN}  ✓ DEEP ARCHIVE context updated${NC}"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# Summary
+# ═══════════════════════════════════════════════════════════════
+
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo -e "  ${GREEN}✅ All context journals updated!${NC}"
+echo "════════════════════════════════════════════════════════════"
+echo ""
+echo "  📥 INBOX:     Check _CONTEXT.md for quick wins"
+echo "  🔥 ACTIVE:    See what you're working on"
+echo "  🏛️ REFERENCE: Browse your knowledge vault"
+echo "  📸 MEDIA:     Check your content pipeline"
+echo "  🧠 STRATEGIC: Review your big picture"
+echo "  📦 ARCHIVE:   See what's been put to rest"
+echo ""
+echo "  💡 Tip: Run this script weekly or add to your Sunday ritual"
+echo ""
